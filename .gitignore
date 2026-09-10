@@ -1,0 +1,22 @@
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.env
+.ruff_cache/
+.pytest_cache/
+*.log
+
+# Runtime artifacts — never commit dynamically onboarded repos
+coordinator/repos/*/
+!coordinator/repos/list_apps.json
+!coordinator/repos/example-application/
+coordinator/repos/example-application/source/*
+!coordinator/repos/example-application/source/.gitkeep
+coordinator/repos/example-application/docs/modules/*
+!coordinator/repos/example-application/docs/modules/.gitkeep

@@ -1,0 +1,90 @@
+{
+  "schemaVersion": "1.0",
+  "updatedAt": "2026-09-03T18:20:54.306323Z",
+  "applications": [
+    {
+      "applicationSlug": "fahimquicklife8-pythonbasics",
+      "displayName": "fahimquicklife8/PythonBasics",
+      "repositoryUrl": "https://github.com/fahimquicklife8/PythonBasics",
+      "branch": "main",
+      "commitSha": "6ed7f02a168956d6e0d642f0181433e878a6b94e",
+      "status": "ready",
+      "languages": [
+        "python"
+      ],
+      "updatedAt": "2026-08-04T18:05:34.215476Z"
+    },
+    {
+      "applicationSlug": "spring-projects-spring-petclinic",
+      "displayName": "spring-projects/spring-petclinic",
+      "repositoryUrl": "https://github.com/spring-projects/spring-petclinic",
+      "branch": "main",
+      "commitSha": "88e37c15cf6fc8490b01bc3e8e2c800cec1ac272",
+      "status": "ready",
+      "languages": [
+        "java"
+      ],
+      "updatedAt": "2026-08-21T17:29:56.312213Z"
+    },
+    {
+      "applicationSlug": "fahimquicklife8-java-basics",
+      "displayName": "fahimquicklife8/JAVA_BASICS",
+      "repositoryUrl": "https://github.com/fahimquicklife8/JAVA_BASICS",
+      "branch": "main",
+      "commitSha": "e7d36e75ef7f1def1ea3e8444d93c65069614d53",
+      "status": "ready",
+      "languages": [
+        "java"
+      ],
+      "updatedAt": "2026-08-21T20:02:06.111675Z"
+    },
+    {
+      "applicationSlug": "fahimquicklife8-dsa",
+      "displayName": "fahimquicklife8/DSA",
+      "repositoryUrl": "https://github.com/fahimquicklife8/DSA",
+      "branch": "main",
+      "commitSha": "04c2b04cb8871ff22dab4f1df8a2ea8b9670b819",
+      "status": "ready",
+      "languages": [
+        "java"
+      ],
+      "updatedAt": "2026-08-21T20:36:18.085703Z"
+    },
+    {
+      "applicationSlug": "arnav2503-ece461l-group5",
+      "displayName": "arnav2503/ece461L_Group5",
+      "repositoryUrl": "https://github.com/arnav2503/ece461L_Group5",
+      "branch": "main",
+      "commitSha": "34ab9bb5ad2371f105dc4927c045fb1328db6262",
+      "status": "ready",
+      "languages": [
+        "python"
+      ],
+      "updatedAt": "2026-08-27T19:01:17.699995Z"
+    },
+    {
+      "applicationSlug": "fahimquicklife8-errorprone",
+      "displayName": "fahimquicklife8/Errorprone",
+      "repositoryUrl": "https://github.com/fahimquicklife8/Errorprone",
+      "branch": "main",
+      "commitSha": "9f5ec7014343bb45fe1cb54a6ac8b5fb78556e3b",
+      "status": "ready",
+      "languages": [
+        "java"
+      ],
+      "updatedAt": "2026-09-03T17:43:12.312902Z"
+    },
+    {
+      "applicationSlug": "shriram2005-ecommerce-website-java",
+      "displayName": "Shriram2005/Ecommerce-Website-Java",
+      "repositoryUrl": "https://github.com/Shriram2005/Ecommerce-Website-Java",
+      "branch": "main",
+      "commitSha": "2ef13ab76b4c44176cf47afebbcbf1a5a87c8001",
+      "status": "ready",
+      "languages": [
+        "java"
+      ],
+      "updatedAt": "2026-09-03T18:20:54.306312Z"
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+"""DocWiki docgenerator package."""
