@@ -1,8 +1,11 @@
-"""Serve the DocWiki frontend and chat API together at http://localhost:8000.
+"""Serve the DocWiki API at http://localhost:8000.
 
-Build the frontend first: cd frontend; npm run build
-Then run from the project root: python main.py
-Alternatively, run npm run dev from frontend to build and start both.
+Run from the project root: python main.py
+In a separate terminal: cd frontend; npm run dev
+Open http://localhost:5173 for local development (no frontend build needed).
+
+For production, npm run build in frontend creates dist, which this server
+can also serve directly on port 8000.
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-// Frontend and API are served together on port 8000; no proxy or override needed.
+// Vite proxies /api to Python in development; production serves both together.
 const API_BASE = ''
 
 const USER_ID_KEY = 'docwiki_user_id'
