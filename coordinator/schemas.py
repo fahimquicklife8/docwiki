@@ -272,10 +272,19 @@ class SymbolIndexEntry(BaseModel):
 
 
 class SymbolIndexSchema(BaseModel):
-    schemaVersion: str = "1.0"
+    schemaVersion: str = "3.0"
     applicationSlug: str
     commitSha: str
-    symbols: list[SymbolIndexEntry] = []
+    symbols: list[SymbolIndexEntry] = []  # Legacy v1 snapshots, rebuilt lazily.
+    summary: dict[str, Any] = {}
+    nodes: dict[str, dict[str, Any]] = {}
+    terms: dict[str, list[str]] = {}
+    edges: list[dict[str, Any]] = []
+    adjacency: dict[str, list[int]] = {}
+    children: dict[str, list[str]] = {}
+    entryCandidates: list[dict[str, Any]] = []
+    buildFiles: list[str] = []
+    references: dict[str, str] = {}
 
 
 # ---------------------------------------------------------------------------

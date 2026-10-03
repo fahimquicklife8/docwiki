@@ -416,19 +416,18 @@ async def test_root_agent_has_expected_tools():
     expected = {
         "list_applications",
         "get_application_status",
-        "select_application",
         "onboard_repository",
-        "get_repository_overview",
-        "list_documents",
-        "get_document",
-        "search_symbols",
-        "get_symbol",
-        "get_graph_neighbors",
-        "read_source",
-        "search_source",
+        "retrieve_context",
     }
     missing = expected - tool_names
     assert not missing, f"Missing tools: {missing}"
+    assert not tool_names & {"select_application", "get_repository_overview",
+                             "list_documents", "get_document", "list_source_files",
+                             "get_graph_summary", "read_source", "search_source",
+                             "search_symbols", "get_symbol", "get_graph_neighbors"}
+    assert root_agent.before_tool_callback is None
+    assert root_agent.after_tool_callback is None
+    assert root_agent.before_model_callback is None
 
 
 # ---------------------------------------------------------------------------

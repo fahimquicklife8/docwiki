@@ -1,0 +1,15 @@
+.git/
+.env*
+**/.env*
+**/__pycache__/
+**/*.pyc
+**/.adk/
+.adk/
+.pytest_cache/
+frontend/node_modules/
+frontend/node_modules.backup*/
+frontend/dist/
+coordinator/repos/
+tests/
+*.zip
+*.log

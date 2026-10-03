@@ -187,12 +187,13 @@ async def test_switch_active_app_isolates_tools(tmp_repos):
         )
         await store.write_json(
             slug,
-            "symbol_index.json",
+            "graph.json",
             {
                 "schemaVersion": "1.0",
                 "applicationSlug": slug,
                 "commitSha": slug + "-sha",
-                "symbols": [],
+                "nodes": [],
+                "edges": [],
             },
         )
 
@@ -202,7 +203,7 @@ async def test_switch_active_app_isolates_tools(tmp_repos):
     rs.get_store = lambda: store
     try:
         from coordinator.tools.catalog_tools import select_application
-        from coordinator.tools.graph_tools import search_symbols
+        from coordinator.tools.graph_tools import retrieve_context
 
         await select_application("app-a", ctx)
         assert state["active_app"] == "app-a"
@@ -210,9 +211,10 @@ async def test_switch_active_app_isolates_tools(tmp_repos):
         await select_application("app-b", ctx)
         assert state["active_app"] == "app-b"
 
-        # search_symbols now operates on app-b
-        result = await search_symbols("anything", None, 10, ctx)
+        # The consolidated retriever now operates on app-b.
+        result = await retrieve_context("anything", "", ctx)
         assert result["ok"] is True
+        assert result["repository"]["applicationSlug"] == "app-b"
     finally:
         rs.get_store = orig
 
@@ -247,13 +249,13 @@ async def test_read_source_validates_path(tmp_repos):
     orig = rs.get_store
     rs.get_store = lambda: store
     try:
-        from coordinator.tools.source_tools import read_source
+        from coordinator.tools.source_tools import _read_source_excerpt
 
-        result = await read_source("foo.py", None, None, ctx)
+        result = await _read_source_excerpt("foo.py", None, None, ctx)
         assert result["ok"] is True
         assert "x = 1" in result["content"]
 
-        bad = await read_source("not_in_manifest.py", None, None, ctx)
+        bad = await _read_source_excerpt("not_in_manifest.py", None, None, ctx)
         assert bad["ok"] is False
         assert bad["error"] == "FILE_NOT_IN_MANIFEST"
     finally:

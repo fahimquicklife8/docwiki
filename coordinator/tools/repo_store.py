@@ -238,7 +238,7 @@ class GcsRepoStore(RepoStore):
         blobs = await loop.run_in_executor(
             None,
             lambda: list(
-                self._get_client().list_blobs(self._bucket_name, prefix=prefix, delimiter="/")
+                self._get_client().list_blobs(self._bucket_name, prefix=prefix)
             ),
         )
         slugs = set()

@@ -26,6 +26,15 @@ from dotenv import load_dotenv
 
 load_dotenv(PROJECT_ROOT / ".env")
 
+# Configure Vertex AI before importing the agent. Authenticate with ADC.
+os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "true"
+os.environ.setdefault("GOOGLE_CLOUD_PROJECT", "upbeat-repeater-477110-q6")
+os.environ["GOOGLE_CLOUD_LOCATION"] = "us-central1"
+os.environ["COORDINATOR_MODEL"] = "gemini-2.5-pro"
+os.environ["DOCUMENTATION_MODEL"] = "gemini-2.5-pro"
+os.environ.pop("GOOGLE_API_KEY", None)
+os.environ.pop("GEMINI_API_KEY", None)
+
 os.environ.setdefault(
     "DOCWIKI_STORAGE_MODE",
     "local",
@@ -33,10 +42,11 @@ os.environ.setdefault(
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from google.adk.events import Event, EventActions
 from google.adk.runners import Runner
-from google.adk.sessions import InMemorySessionService
+from google.adk.sessions import InMemorySessionService, VertexAiSessionService
 from google.genai import types as genai_types
 from pydantic import BaseModel
 
@@ -50,7 +60,17 @@ logger = logging.getLogger(__name__)
 
 _APP_NAME = "docwiki"
 
-_session_service = InMemorySessionService()
+_agent_engine_id = os.environ.get("DOCWIKI_SESSION_ENGINE_ID")
+if _agent_engine_id:
+    _session_service = VertexAiSessionService(
+        project=os.environ["GOOGLE_CLOUD_PROJECT"],
+        location=os.environ.get("DOCWIKI_SESSION_LOCATION", "us-central1"),
+        agent_engine_id=_agent_engine_id,
+    )
+elif os.environ.get("K_SERVICE"):
+    raise RuntimeError("Cloud Run requires DOCWIKI_SESSION_ENGINE_ID for persistent sessions.")
+else:
+    _session_service = InMemorySessionService()
 
 _runner = Runner(
     agent=root_agent,
@@ -61,6 +81,24 @@ _runner = Runner(
 app = FastAPI(
     title="DocWiki UI API",
 )
+
+# The built React app and API share one origin and one port.
+_FRONTEND_DIST = PROJECT_ROOT / "frontend" / "dist"
+app.mount(
+    "/assets",
+    StaticFiles(directory=str(_FRONTEND_DIST / "assets"), check_dir=False),
+    name="frontend-assets",
+)
+
+
+@app.get("/", include_in_schema=False)
+@app.get("/applications/{application_slug}", include_in_schema=False)
+async def frontend_page():
+    index = _FRONTEND_DIST / "index.html"
+    if not index.is_file():
+        raise HTTPException(status_code=503, detail="Build the frontend first: cd frontend; npm run build")
+    return FileResponse(index, headers={"Cache-Control": "no-cache"})
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -460,10 +498,9 @@ async def list_documents(
             "documents.json",
         )
 
-        return documents.get(
-            "documents",
-            [],
-        )
+        from coordinator.tools.documentation_tools import document_navigation
+
+        return await document_navigation(store, slug, documents.get("documents", []))
     except FileNotFoundError:
         return []
 
@@ -601,6 +638,16 @@ async def chat_stream(
     )
 
     async def generate():
+        usage_fields = {
+            "totalTokens": "total_token_count",
+            "inputTokens": "prompt_token_count",
+            "outputTokens": "candidates_token_count",
+            "thinkingTokens": "thoughts_token_count",
+            "cachedTokens": "cached_content_token_count",
+        }
+        usage = {key: None for key in usage_fields}
+        usage.update({"modelCalls": 0, "incomplete": False})
+        counted_events = set()
         try:
             content = genai_types.Content(
                 role="user",
@@ -616,6 +663,24 @@ async def chat_stream(
                 session_id=request.sessionId,
                 new_message=content,
             ):
+                # ADK's final response contains the accumulated usage for a model
+                # call. Ignore partial chunks to avoid counting that usage twice.
+                # Collect before the content guard: usage-only events are valid.
+                if not getattr(event, "partial", False):
+                    metadata = getattr(event, "usage_metadata", None)
+                    event_id = getattr(event, "id", None)
+                    if metadata is not None and (not event_id or event_id not in counted_events):
+                        if event_id:
+                            counted_events.add(event_id)
+                        usage["modelCalls"] += 1
+                        for key, field in usage_fields.items():
+                            value = getattr(metadata, field, None)
+                            if value is not None:
+                                usage[key] = (usage[key] or 0) + value
+                        if metadata.total_token_count is None:
+                            usage["incomplete"] = True
+                    elif metadata is None and event.content and event.content.role == "model":
+                        usage["incomplete"] = True
                 if (
                     not event.content
                     or not event.content.parts
@@ -716,6 +781,7 @@ async def chat_stream(
                         )
 
         except Exception:
+            usage["incomplete"] = True
             logger.exception(
                 "Chat stream error for session %s",
                 request.sessionId,
@@ -737,7 +803,7 @@ async def chat_stream(
 
         yield (
             "data: "
-            f"{json.dumps({'type': 'done'})}"
+            f"{json.dumps({'type': 'done', 'usage': usage})}"
             "\n\n"
         )
 

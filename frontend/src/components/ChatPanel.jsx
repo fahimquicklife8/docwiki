@@ -5,6 +5,21 @@ import {
 } from 'react'
 
 import { streamChat } from '../api/docwikiApi.js'
+import { MarkdownViewer } from './MarkdownViewer.jsx'
+
+function uniqueTools(tools) {
+  const byName = new Map()
+  for (const tool of tools) {
+    const existing = byName.get(tool.name)
+    if (!existing) {
+      byName.set(tool.name, { ...tool })
+    } else if (tool.status === 'running') {
+      // Keep one stable row, active while any invocation is still running.
+      existing.status = 'running'
+    }
+  }
+  return Array.from(byName.values())
+}
 
 export function ChatPanel({
   userId,
@@ -22,7 +37,13 @@ export function ChatPanel({
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState(false)
   const activeTools = []
-  const bottomRef = useRef(null)
+  const messagesRef = useRef(null)
+  // Deduplicate presentation only; retain every streamed event and callback.
+  const visibleMessages = messages.map(message => (
+    message.role === 'trace'
+      ? { ...message, tools: uniqueTools(message.tools) }
+      : message
+  ))
 
   const sessionReady = Boolean(
     userId &&
@@ -34,9 +55,11 @@ export function ChatPanel({
   )
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({
-      behavior: 'smooth',
-    })
+    const container = messagesRef.current
+    if (container) {
+      // Scroll only the chat history, never its ancestors or the document.
+      container.scrollTop = container.scrollHeight
+    }
   }, [messages, streaming])
 
   // Clear visible messages if the underlying ADK session changes.
@@ -89,12 +112,12 @@ export function ChatPanel({
         )
       ) {
         if (
-          event.type === 'text' &&
-          !event.partial
+          event.type === 'text'
         ) {
           const agentMessage = {
             role: 'agent',
             content: event.content,
+            partial: Boolean(event.partial),
           }
 
           setMessages(previous => {
@@ -102,10 +125,12 @@ export function ChatPanel({
               previous.length - 1
             ]
 
-            if (last?.role === 'agent') {
+            if (last?.role === 'agent' && last.partial) {
               return [
                 ...previous.slice(0, -1),
-                agentMessage,
+                { ...agentMessage, content: event.partial
+                  ? last.content + event.content
+                  : event.content },
               ]
             }
 
@@ -176,6 +201,10 @@ export function ChatPanel({
         } else if (
           event.type === 'done'
         ) {
+          setMessages(previous => [
+            ...previous,
+            { role: 'usage', id: `${traceId}-usage`, usage: event.usage },
+          ])
           break
         }
       }
@@ -205,6 +234,10 @@ export function ChatPanel({
             }
           : message
       )))
+      // A disconnected stream may end before ADK's usage summary arrives.
+      setMessages(previous => previous.some(message => message.id === `${traceId}-usage`)
+        ? previous
+        : [...previous, { role: 'usage', id: `${traceId}-usage`, usage: null }])
       setStreaming(false)
     }
   }
@@ -221,7 +254,7 @@ export function ChatPanel({
 
   return (
     <div className={`chat-panel ${className}`}>
-      <div className="chat-messages">
+      <div className="chat-messages" ref={messagesRef}>
         {messages.length === 0 && (
           <div
             style={{
@@ -235,7 +268,7 @@ export function ChatPanel({
           </div>
         )}
 
-        {messages.map((message, index) => (
+        {visibleMessages.map((message, index) => (
           message.role === 'trace' ? (
             message.tools.length > 0 && (
               <div className="chat-tools" key={message.id}>
@@ -266,12 +299,21 @@ export function ChatPanel({
                 ))}
               </div>
             )
+          ) : message.role === 'usage' ? (
+            <div className="chat-token-usage" key={message.id}
+              title="ADK-reported usage across all model calls for this request, including tool steps and sub-agents. Cached and thinking tokens are included in the reported total.">
+              {message.usage?.totalTokens != null
+                ? `${message.usage.totalTokens.toLocaleString()} tokens used${message.usage.incomplete ? ' (partial usage)' : ''}`
+                : 'Token usage unavailable'}
+            </div>
           ) : (
             <div
               key={index}
               className={`chat-message chat-message--${message.role}`}
             >
-              {message.content}
+              {message.role === 'agent'
+                ? <MarkdownViewer content={message.content} />
+                : message.content}
             </div>
           )
         ))}
@@ -321,7 +363,6 @@ export function ChatPanel({
             </div>
           )}
 
-        <div ref={bottomRef} />
       </div>
 
       <div className="chat-input-row">

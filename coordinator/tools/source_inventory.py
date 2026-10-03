@@ -10,6 +10,13 @@ SUPPORTED_LANGUAGES: dict[str, str] = {
     ".java": "java",
 }
 
+# Bounded project evidence; never ingest arbitrary configuration or secrets.
+PROJECT_FILES = frozenset({
+    "pom.xml", "build.gradle", "build.gradle.kts", "settings.gradle",
+    "settings.gradle.kts", "pyproject.toml", "requirements.txt", "requirements-dev.txt",
+    "setup.cfg", "package.json", "readme", "readme.md", "readme.rst", "readme.txt",
+})
+
 # Directories to skip during inventory
 _SKIP_DIRS: frozenset[str] = frozenset(
     {
@@ -36,6 +43,7 @@ def inventory_source_files(
     max_files: int,
     max_total_bytes: int,
     max_single_bytes: int,
+    include_context: bool = False,
 ) -> list[dict]:
     """Walk repo_root and return metadata for all supported source files.
 
@@ -58,7 +66,7 @@ def inventory_source_files(
 
         ext = path.suffix.lower()
         language = SUPPORTED_LANGUAGES.get(ext)
-        if language is None:
+        if language is None and not (include_context and path.name.lower() in PROJECT_FILES):
             continue
 
         size = path.stat().st_size
@@ -91,7 +99,7 @@ def inventory_source_files(
             }
         )
 
-    if not files:
+    if not any(f["language"] in SUPPORTED_LANGUAGES.values() for f in files):
         raise ValueError("NO_SUPPORTED_SOURCE")
 
     return files

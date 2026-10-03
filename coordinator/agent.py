@@ -12,25 +12,12 @@ from google.adk.agents import LlmAgent
 
 from coordinator import config
 from coordinator.docgenerator.agent import doc_generator
+from coordinator.tools.graph_tools import retrieve_context
 from coordinator.tools.catalog_tools import (
     get_application_status,
     list_applications,
 )
-from coordinator.tools.documentation_tools import (
-    get_document,
-    get_repository_overview,
-    list_documents,
-)
-from coordinator.tools.graph_tools import (
-    get_graph_neighbors,
-    get_symbol,
-    search_symbols,
-)
 from coordinator.tools.onboarding_tools import onboard_repository
-from coordinator.tools.source_tools import (
-    read_source,
-    search_source,
-)
 
 _PROMPT_PATH = (
     Path(__file__).parent
@@ -61,19 +48,8 @@ root_agent = LlmAgent(
         get_application_status,
         onboard_repository,
 
-        # Repository documentation tools
-        get_repository_overview,
-        list_documents,
-        get_document,
-
-        # Graph and symbol tools
-        search_symbols,
-        get_symbol,
-        get_graph_neighbors,
-
-        # Exact source tools
-        read_source,
-        search_source,
+        # Graph-first repository retrieval; documentation is already in the UI.
+        retrieve_context,
     ],
     sub_agents=[
         doc_generator,

@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import re
+from pathlib import PurePosixPath
 from datetime import UTC, datetime
 from typing import Any
 
 from google.adk.tools.tool_context import ToolContext
 
 from coordinator import config
+from coordinator.schemas import STAGE_PROGRESS
 from coordinator.tools import repo_store as _rs
 from coordinator.tools.source_tools import _get_active_app
+from coordinator.tools.source_inventory import PROJECT_FILES
 
 
 def _now() -> str:
@@ -29,9 +32,9 @@ def _slug_from_module_id(module_id: str) -> str:
 async def list_documentation_modules(tool_context: ToolContext) -> dict:
     """List modules for documentation.
 
-    Files are grouped into chunks by cumulative byte size (MODULE_CHUNK_BYTES).
-    This ensures each module covers a meaningful slice of the codebase regardless
-    of how many packages or folders the project uses.
+    Files are grouped by package/directory, then bounded by size and page count.
+    Display names are suggestions; the writer chooses a specific responsibility
+    title from module evidence and uses it as the document's H1.
     """
     app_slug = _get_active_app(tool_context)
     if not app_slug:
@@ -52,11 +55,12 @@ async def list_documentation_modules(tool_context: ToolContext) -> dict:
         display = _chunk_display_name(i, [f["path"] for f in chunk_files])
         modules.append(
             {
-                "moduleId": f"chunk-{i}",
+                "moduleId": f"Module-{i}",
                 "displayName": display,
                 "fileCount": len(chunk_files),
                 "bytes": chunk_bytes,
                 "languages": langs,
+                "samplePaths": [f["path"] for f in chunk_files[:8]],
             }
         )
 
@@ -64,9 +68,10 @@ async def list_documentation_modules(tool_context: ToolContext) -> dict:
 
 
 def _build_file_chunks(files: list[dict], max_chunks: int) -> list[list[dict]]:
-    """Group files into at most max_chunks chunks by cumulative byte size."""
+    """Keep package boundaries where possible, with deterministic bounded pages."""
     if not files:
         return []
+    max_chunks = max(1, max_chunks)
     sorted_files = sorted(files, key=lambda f: f["path"])
     threshold = config.MODULE_CHUNK_BYTES
     chunks: list[list[dict]] = []
@@ -74,8 +79,8 @@ def _build_file_chunks(files: list[dict], max_chunks: int) -> list[list[dict]]:
     current_bytes = 0
     for f in sorted_files:
         fb = f.get("bytes", 0)
-        # Start a new chunk when threshold exceeded — but never if we've hit the cap
-        if current and current_bytes + fb > threshold and len(chunks) < max_chunks - 1:
+        package_changed = current and PurePosixPath(f["path"]).parent != PurePosixPath(current[-1]["path"]).parent
+        if current and (package_changed or current_bytes + fb > threshold):
             chunks.append(current)
             current = [f]
             current_bytes = fb
@@ -84,25 +89,42 @@ def _build_file_chunks(files: list[dict], max_chunks: int) -> list[list[dict]]:
             current_bytes += fb
     if current:
         chunks.append(current)
-    # Merge any excess chunks beyond the cap into the last one
+    # Merge the smallest adjacent groups instead of making one huge final page.
     while len(chunks) > max_chunks:
-        chunks[-2].extend(chunks.pop())
+        i = min(range(len(chunks) - 1), key=lambda j: sum(
+            f.get("bytes", 0) for chunk in chunks[j:j + 2] for f in chunk))
+        chunks[i].extend(chunks.pop(i + 1))
     return chunks
 
 
 def _chunk_display_name(index: int, paths: list[str]) -> str:
-    """Human-readable name: common directory prefix when available."""
+    """Suggest a page name from meaningful package names or source file stems."""
     if not paths:
-        return f"Module {index}"
-    parts_list = [p.split("/") for p in paths]
-    common: list[str] = []
-    for group in zip(*parts_list):
-        if len(set(group)) == 1:
-            common.append(group[0])
-        else:
-            break
-    prefix = "/".join(common) if common else ""
-    return f"Module {index}: {prefix}" if prefix else f"Module {index}"
+        return "Implementation details"
+    generic = {"src", "main", "java", "python", "com", "org", "net", "lib"}
+    names = []
+    for path in paths:
+        p = PurePosixPath(path)
+        parts = [part for part in p.parts[:-1] if part not in generic]
+        name = parts[-1] if parts else p.stem.strip("_")
+        name = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", name).replace("_", " ").replace("-", " ").strip()
+        name = {"tests": "Testing and verification", "test": "Testing and verification",
+                "controllers": "Request handling", "services": "Application services",
+                "repositories": "Data access"}.get(name.lower(), name[:1].upper() + name[1:])
+        if name and name not in names:
+            names.append(name)
+    return " and ".join(names[:2]) or "Implementation details"
+
+
+def _document_title(markdown: str, fallback: str, title: str = "") -> str:
+    """Prefer an agent-authored title/H1, while rejecting old numbered labels."""
+    heading = re.search(r"^#\s+(.+?)\s*#*\s*$", markdown, re.M)
+    for candidate in (title, heading.group(1) if heading else "", fallback):
+        candidate = re.sub(r"^(?:module|chunk)[\s-]+\d+\s*[:\-]?\s*", "", candidate.strip(), flags=re.I)
+        candidate = re.sub(r"[`*_]", "", candidate).strip()
+        if candidate and candidate.lower() not in {"src", "module", "overview", "overview.md"}:
+            return candidate[:120]
+    return "Implementation details"
 
 
 async def load_documentation_context(module_id: str, tool_context: ToolContext) -> dict:
@@ -122,7 +144,7 @@ async def load_documentation_context(module_id: str, tool_context: ToolContext) 
     module_node_ids: set[str] = set()
     module_nodes: list[dict] = []
 
-    if module_id.startswith("chunk-"):
+    if module_id.lower().startswith(("chunk-", "module-")):
         # Chunk-based: re-derive the file list deterministically from the manifest
         try:
             chunk_index = int(module_id.split("-", 1)[1])
@@ -196,9 +218,13 @@ async def load_documentation_context(module_id: str, tool_context: ToolContext) 
         )
         total_chars += len(excerpt)
 
+    if not source_excerpts:
+        return {"ok": False, "error": "MODULE_EVIDENCE_NOT_FOUND", "moduleId": module_id}
+
     return {
         "ok": True,
         "moduleId": module_id,
+        "suggestedTitle": _chunk_display_name(0, sorted(module_paths)),
         "nodes": module_nodes,
         "edges": relevant_edges,
         "externalNodes": external_nodes,
@@ -211,11 +237,18 @@ async def save_module_document(
     module_id: str,
     markdown: str,
     tool_context: ToolContext = None,
+    title: str = "",
 ) -> dict:
-    """Persist a module document."""
+    """Persist a focused deep-dive page. Supply a descriptive title or start the
+    Markdown with a responsibility-based H1; that title appears in navigation.
+    Keep the discovered module_id unchanged so references remain stable.
+    """
     app_slug = _get_active_app(tool_context)
     if not app_slug:
         return {"ok": False, "error": "NO_ACTIVE_APPLICATION"}
+
+    if not markdown.strip():
+        return {"ok": False, "error": "EMPTY_DOCUMENT"}
 
     store = _rs.get_store()
     try:
@@ -224,6 +257,12 @@ async def save_module_document(
         return {"ok": False, "error": "MANIFEST_NOT_FOUND"}
 
     slug = _slug_from_module_id(module_id)
+    fallback = module_id.replace(".", " / ").replace("#", " ")
+    if re.fullmatch(r"(?:chunk|module)-\d+", module_id, re.I):
+        chunks = _build_file_chunks(manifest.get("files", []), config.MAX_DOC_MODULES)
+        index = int(module_id.split("-")[1]) - 1
+        fallback = _chunk_display_name(index, [f["path"] for f in chunks[index]]) if 0 <= index < len(chunks) else "Implementation details"
+    display_title = _document_title(markdown, fallback, title)
     doc_path = f"docs/modules/{slug}.md"
     await store.write_text(app_slug, doc_path, markdown)
 
@@ -234,14 +273,14 @@ async def save_module_document(
         manifest.get("commitSha") or "",
         {
             "slug": slug,
-            "title": module_id.replace(".", " / ").replace("#", " "),
+            "title": display_title,
             "kind": "module",
             "path": doc_path,
             "moduleId": module_id,
             "sourceReferences": [],
         },
     )
-    return {"ok": True, "slug": slug, "path": doc_path}
+    return {"ok": True, "slug": slug, "path": doc_path, "title": display_title}
 
 
 async def load_overview_context(tool_context: ToolContext) -> dict:
@@ -267,12 +306,12 @@ async def load_overview_context(tool_context: ToolContext) -> dict:
     readme_excerpts: list[dict] = []
     total_chars = 0
     readme_patterns = {"readme", "readme.md", "readme.txt", "readme.rst"}
-    for entry in manifest.get("files", []):
+    for entry in manifest.get("contextFiles", []) + manifest.get("files", []):
         if total_chars >= config.DOC_CONTEXT_CHARS:
             break
         fp = entry["path"]
         basename = fp.lower().split("/")[-1]
-        is_config = basename in ("setup.py", "pyproject.toml", "pom.xml", "build.gradle")
+        is_config = basename in PROJECT_FILES or basename == "setup.py"
         is_readme = basename in readme_patterns
         if not is_readme and not is_config:
             continue
@@ -281,8 +320,10 @@ async def load_overview_context(tool_context: ToolContext) -> dict:
         except FileNotFoundError:
             continue
         remaining = config.DOC_CONTEXT_CHARS - total_chars
-        excerpt = content[:remaining]
-        readme_excerpts.append({"path": fp, "content": excerpt})
+        excerpt = content[:min(remaining, 4000)]
+        readme_excerpts.append({"path": fp, "content": excerpt,
+                                "startLine": 1, "endLine": len(excerpt.splitlines()),
+                                "truncated": len(excerpt) < len(content)})
         total_chars += len(excerpt)
 
     # Statistics summary
@@ -310,6 +351,9 @@ async def save_overview_document(
     app_slug = _get_active_app(tool_context)
     if not app_slug:
         return {"ok": False, "error": "NO_ACTIVE_APPLICATION"}
+
+    if not markdown.strip():
+        return {"ok": False, "error": "EMPTY_DOCUMENT"}
 
     store = _rs.get_store()
     try:
@@ -347,8 +391,47 @@ async def finalize_documentation(tool_context: ToolContext) -> dict:
     except FileNotFoundError as exc:
         return {"ok": False, "error": str(exc)}
 
-    # Update metadata to ready
+    # An index entry alone is not proof that generation and persistence succeeded.
+    documents = docs.get("documents", [])
+    failures = []
+    if not any(d.get("kind") == "overview" and d.get("path") == "docs/overview.md"
+               for d in documents):
+        failures.append("OVERVIEW_NOT_FOUND")
+    modules = await list_documentation_modules(tool_context)
+    if not modules.get("ok"):
+        failures.append(modules["error"])
+    else:
+        for module in modules["modules"]:
+            module_id = module["moduleId"].lower()
+            if not any(d.get("kind") == "module" and
+                       str(d.get("moduleId", "")).lower().replace("chunk-", "module-", 1) == module_id
+                       for d in documents):
+                failures.append(f"MODULE_DOCUMENT_NOT_FOUND:{module_id}")
+    for document in documents:
+        path = document.get("path")
+        try:
+            if not path or not (await store.read_text(app_slug, path)).strip():
+                failures.append(f"EMPTY_DOCUMENT:{document.get('slug')}")
+        except (OSError, ValueError):
+            failures.append(f"DOCUMENT_UNAVAILABLE:{document.get('slug')}")
+    if failures:
+        meta.update(status="failed", lastError="DOCUMENTATION_INCOMPLETE", updatedAt=_now())
+        await store.write_json(app_slug, "metadata.json", meta)
+        try:
+            job = await store.read_json(app_slug, "job.json")
+        except FileNotFoundError:
+            job = {}
+        job.update(status="failed", stage="generating_documentation",
+                   error="DOCUMENTATION_INCOMPLETE", message="Required documentation is unavailable.",
+                   progressPercent=STAGE_PROGRESS["generating_documentation"],
+                   completedAt=_now(), updatedAt=_now())
+        await store.write_json(app_slug, "job.json", job)
+        await _update_catalog(store, app_slug, meta)
+        return {"ok": False, "error": "DOCUMENTATION_INCOMPLETE", "failures": failures}
+
+    # Update metadata to ready only after all required documents can be read.
     meta["status"] = "ready"
+    meta["lastError"] = None
     meta["statistics"]["documents"] = len(docs.get("documents", []))
     meta["updatedAt"] = _now()
     await store.write_json(app_slug, "metadata.json", meta)
@@ -359,7 +442,6 @@ async def finalize_documentation(tool_context: ToolContext) -> dict:
         job = await store.read_json(app_slug, "job.json")
     except FileNotFoundError:
         pass
-    from coordinator.schemas import STAGE_PROGRESS
 
     job.update(
         {
@@ -367,6 +449,7 @@ async def finalize_documentation(tool_context: ToolContext) -> dict:
             "stage": "complete",
             "progressPercent": STAGE_PROGRESS["complete"],
             "message": "Documentation generation complete.",
+            "error": None,
             "completedAt": _now(),
             "updatedAt": _now(),
         }
@@ -380,51 +463,27 @@ async def finalize_documentation(tool_context: ToolContext) -> dict:
 
 
 # ===========================================================================
-# Coordinator document retrieval tools (Phase 6)
+# Document navigation for the UI
 # ===========================================================================
 
 
-async def get_repository_overview(tool_context: ToolContext) -> dict:
-    """Return the overview document for the active application."""
-    app_slug = _get_active_app(tool_context)
-    if not app_slug:
-        return {"ok": False, "error": "NO_ACTIVE_APPLICATION"}
-    store = _rs.get_store()
-    return await _get_doc_by_kind(store, app_slug, "overview")
-
-
-async def list_documents(tool_context: ToolContext) -> dict:
-    """List available documents for the active application."""
-    app_slug = _get_active_app(tool_context)
-    if not app_slug:
-        return {"ok": False, "error": "NO_ACTIVE_APPLICATION"}
-    store = _rs.get_store()
-    try:
-        docs = await store.read_json(app_slug, "documents.json")
-    except FileNotFoundError:
-        return {"ok": True, "documents": []}
-    return {"ok": True, "documents": docs.get("documents", [])}
-
-
-async def get_document(slug: str, tool_context: ToolContext) -> dict:
-    """Retrieve a specific document by slug."""
-    app_slug = _get_active_app(tool_context)
-    if not app_slug:
-        return {"ok": False, "error": "NO_ACTIVE_APPLICATION"}
-    store = _rs.get_store()
-    try:
-        docs = await store.read_json(app_slug, "documents.json")
-    except FileNotFoundError:
-        return {"ok": False, "error": "DOCUMENTS_NOT_FOUND"}
-
-    for doc in docs.get("documents", []):
-        if doc.get("slug") == slug:
+async def document_navigation(store, app_slug: str, documents: list[dict]) -> list[dict]:
+    """Resolve legacy numbered titles for the UI without rewriting saved artifacts."""
+    result = []
+    for doc in documents:
+        item = dict(doc)
+        if item.get("kind") == "overview":
+            item["title"] = "Overview"
+        elif re.match(r"^(?:module|chunk)[ -]?\d+\b", item.get("title", ""), re.I):
             try:
-                content = await store.read_text(app_slug, doc["path"])
-            except FileNotFoundError:
-                return {"ok": False, "error": "DOCUMENT_FILE_NOT_FOUND", "slug": slug}
-            return {"ok": True, "document": doc, "content": content}
-    return {"ok": False, "error": "DOCUMENT_NOT_FOUND", "slug": slug}
+                markdown = await store.read_text(app_slug, item["path"])
+            except (KeyError, FileNotFoundError):
+                markdown = ""
+            cited_paths = re.findall(r"\[([^\[\]\n]+\.(?:py|java)):\d+(?:-\d+)?\]", markdown)
+            fallback = _chunk_display_name(0, cited_paths) if cited_paths else item.get("title", "Implementation details")
+            item["title"] = _document_title(markdown, fallback)
+        result.append(item)
+    return result
 
 
 # ===========================================================================
@@ -448,21 +507,6 @@ async def _upsert_document(store, app_slug: str, commit_sha: str, doc: dict) -> 
     updated.append(doc)
     docs["documents"] = updated
     await store.write_json(app_slug, "documents.json", docs)
-
-
-async def _get_doc_by_kind(store, app_slug: str, kind: str) -> dict:
-    try:
-        docs = await store.read_json(app_slug, "documents.json")
-    except FileNotFoundError:
-        return {"ok": False, "error": "DOCUMENTS_NOT_FOUND"}
-    for doc in docs.get("documents", []):
-        if doc.get("kind") == kind:
-            try:
-                content = await store.read_text(app_slug, doc["path"])
-            except FileNotFoundError:
-                return {"ok": False, "error": "DOCUMENT_FILE_NOT_FOUND"}
-            return {"ok": True, "document": doc, "content": content}
-    return {"ok": False, "error": f"{kind.upper()}_NOT_FOUND"}
 
 
 async def _update_catalog(store, app_slug: str, meta: dict) -> None:

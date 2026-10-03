@@ -13,8 +13,8 @@ export function ApplicationCard({ app }) {
       <div className="app-card__header">
         <div className="app-card__icon">{initials}</div>
         <div className="app-card__identity">
-          <div className="app-card__name">{app.displayName}</div>
-          <div className="app-card__url">{app.repositoryUrl}</div>
+          <div className="app-card__name" title={app.displayName}>{app.displayName}</div>
+          <div className="app-card__url" title={app.repositoryUrl}>{app.repositoryUrl}</div>
         </div>
         <span className="app-card__arrow" aria-hidden="true">↗</span>
       </div>

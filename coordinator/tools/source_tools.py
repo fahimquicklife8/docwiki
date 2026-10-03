@@ -1,4 +1,4 @@
-"""Source read/search tools — read_source, search_source. Phase 6."""
+"""Internal bounded source excerpts and active-application lookup."""
 
 from __future__ import annotations
 
@@ -13,15 +13,16 @@ def _get_active_app(tool_context: ToolContext) -> str | None:
     return tool_context.state.get("active_app")
 
 
-async def read_source(
+async def _read_source_excerpt(
     path: str,
     start_line: int | None,
     end_line: int | None,
     tool_context: ToolContext,
 ) -> dict:
-    """Read source lines for the active application.
+    """Fallback after graph retrieval leaves a specific behavior/version gap.
 
-    Validates path against source_manifest.json and clamps line range.
+    Read one trusted graph/search/build path and a narrow explicit line range.
+    Validates the manifest and clamps the window. Do not scan files for orientation.
     """
     app_slug = _get_active_app(tool_context)
     if not app_slug:
@@ -33,7 +34,7 @@ async def read_source(
     except FileNotFoundError:
         return {"ok": False, "error": "MANIFEST_NOT_FOUND"}
 
-    manifest_paths = {f["path"] for f in manifest.get("files", [])}
+    manifest_paths = {f["path"] for f in manifest.get("files", []) + manifest.get("contextFiles", [])}
     if path not in manifest_paths:
         return {"ok": False, "error": "FILE_NOT_IN_MANIFEST", "path": path}
 
@@ -45,67 +46,23 @@ async def read_source(
     lines = content.splitlines()
     total = len(lines)
     s = max(1, start_line or 1)
-    e = min(total, end_line or total)
+    e = min(total, end_line or s + 79)
     # Clamp window
-    if e - s + 1 > config.MAX_SOURCE_TOOL_LINES:
-        e = s + config.MAX_SOURCE_TOOL_LINES - 1
+    if e - s + 1 > min(config.MAX_SOURCE_TOOL_LINES, 80):
+        e = s + min(config.MAX_SOURCE_TOOL_LINES, 80) - 1
+    if s > total or e < s:
+        return {"ok": False, "error": "INVALID_LINE_RANGE", "totalLines": total}
 
-    snippet = "\n".join(lines[s - 1 : e])
+    excerpt = "\n".join(lines[s - 1 : e])
+    snippet = excerpt[:4000]
+    actual_end = s + max(1, len(snippet.splitlines())) - 1
     return {
         "ok": True,
         "path": path,
         "startLine": s,
-        "endLine": e,
+        "endLine": actual_end,
         "totalLines": total,
         "content": snippet,
+        "truncated": actual_end < min(total, end_line or total) or len(excerpt) > len(snippet),
+        "fileHasMoreLines": actual_end < total,
     }
-
-
-async def search_source(
-    query: str,
-    path_prefix: str | None,
-    limit: int,
-    tool_context: ToolContext,
-) -> dict:
-    """Lexically search manifest-listed source files of the active application."""
-    app_slug = _get_active_app(tool_context)
-    if not app_slug:
-        return {"ok": False, "error": "NO_ACTIVE_APPLICATION"}
-
-    store = _rs.get_store()
-    try:
-        manifest = await store.read_json(app_slug, "source_manifest.json")
-    except FileNotFoundError:
-        return {"ok": False, "error": "MANIFEST_NOT_FOUND"}
-
-    cap = min(max(1, limit), 50)
-    ql = query.lower()
-    matches: list[dict] = []
-    files_searched = 0
-
-    for entry in manifest.get("files", []):
-        fp = entry["path"]
-        if path_prefix and not fp.startswith(path_prefix):
-            continue
-        if files_searched >= 200:  # cap files searched
-            break
-        files_searched += 1
-
-        try:
-            content = await store.read_text(app_slug, f"source/{fp}")
-        except FileNotFoundError:
-            continue
-
-        for lineno, line in enumerate(content.splitlines(), 1):
-            if ql in line.lower():
-                matches.append(
-                    {
-                        "path": fp,
-                        "line": lineno,
-                        "content": line.rstrip(),
-                    }
-                )
-                if len(matches) >= cap * 5:
-                    break
-
-    return {"ok": True, "query": query, "matches": matches[:cap]}

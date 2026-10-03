@@ -165,6 +165,7 @@ async def onboard_repository(
                 max_files=config.MAX_SOURCE_FILES,
                 max_total_bytes=config.MAX_TOTAL_SOURCE_BYTES,
                 max_single_bytes=config.MAX_SINGLE_FILE_BYTES,
+                include_context=True,
             )
         except ValueError as exc:
             err = str(exc)
@@ -180,7 +181,11 @@ async def onboard_repository(
             await store.write_text(
                 app_slug, f"source/{entry['path']}", content.decode("utf-8", errors="replace")
             )
-            total_bytes += entry["bytes"]
+            if entry["language"]:
+                total_bytes += entry["bytes"]
+
+        context_entries = [entry for entry in file_entries if not entry["language"]]
+        file_entries = [entry for entry in file_entries if entry["language"]]
 
         # Write source manifest
         manifest = {
@@ -188,6 +193,7 @@ async def onboard_repository(
             "applicationSlug": app_slug,
             "commitSha": commit_sha,
             "files": file_entries,
+            "contextFiles": context_entries,
         }
         await store.write_json(app_slug, "source_manifest.json", manifest)
 
@@ -238,7 +244,7 @@ async def onboard_repository(
             await _update_meta_failed(store, app_slug, err, meta_init, now)
             return {"ok": False, "error": err, "status": "failed"}
 
-        symbol_index = build_symbol_index(app_slug, commit_sha, graph)
+        symbol_index = build_symbol_index(app_slug, commit_sha, graph, manifest)
 
         # ── Stage: persisting ────────────────────────────────────────────
         await _write_job("persisting", "running", "Persisting graph and symbol index.")

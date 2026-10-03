@@ -201,9 +201,12 @@ def test_symbol_index_built():
 
     graph = build_graph("app", "sha", st, rels)
     idx = build_symbol_index("app", "sha", graph)
-    symbols = idx["symbols"]
+    symbols = idx["nodes"].values()
     names = {s["name"] for s in symbols}
     assert "MyService" in names or "process" in names
+    assert idx["terms"]["process"]
+    from coordinator.schemas import SymbolIndexSchema
+    SymbolIndexSchema(**idx)
 
 
 def test_graph_validation_rejects_bad_node_kind():

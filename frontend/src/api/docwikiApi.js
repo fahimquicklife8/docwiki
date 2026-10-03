@@ -1,11 +1,5 @@
-// Keep this empty during local or Cloud Shell development.
-// Vite proxies /api requests to the backend on port 8000.
-//
-// Set VITE_API_BASE_URL only when calling a deployed backend.
-
-const API_BASE = (
-  import.meta.env.VITE_API_BASE_URL ?? ''
-).replace(/\/+$/, '')
+// Frontend and API are served together on port 8000; no proxy or override needed.
+const API_BASE = ''
 
 const USER_ID_KEY = 'docwiki_user_id'
 const HOME_SESSION_KEY = 'docwiki_home_session_id'

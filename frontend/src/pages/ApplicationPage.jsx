@@ -11,6 +11,7 @@ import {
 import { ChatPanel } from '../components/ChatPanel.jsx'
 import { DocumentationSidebar } from '../components/DocumentationSidebar.jsx'
 import { MarkdownViewer } from '../components/MarkdownViewer.jsx'
+import { ResizableChat } from '../components/ResizableChat.jsx'
 
 import {
   getApplication,
@@ -31,6 +32,7 @@ export function ApplicationPage() {
   const [documents, setDocuments] = useState([])
   const [activeDocSlug, setActiveDocSlug] = useState(null)
   const [docContent, setDocContent] = useState('')
+  const [headings, setHeadings] = useState([])
   const [activated, setActivated] = useState(false)
   const [loading, setLoading] = useState(true)
 
@@ -70,13 +72,14 @@ export function ApplicationPage() {
     }
   }, [appSlug])
 
-  // Load repository metadata and overview.md.
+  // Load repository metadata and generated documentation.
   useEffect(() => {
     let cancelled = false
 
     setLoading(true)
     setMeta(null)
     setDocContent('')
+    setHeadings([])
     setDocuments([])
     setActiveDocSlug(null)
 
@@ -89,55 +92,22 @@ export function ApplicationPage() {
 
         setMeta(applicationMeta)
 
-        const overviewDocument = (
-          availableDocuments.find(document => {
-            const slug = String(
-              document.slug || ''
-            ).toLowerCase()
-
-            const name = String(
-              document.name ||
-              document.filename ||
-              ''
-            ).toLowerCase()
-
-            const path = String(
-              document.path || ''
-            ).toLowerCase()
-
-            return (
-              slug === 'overview' ||
-              slug === 'overview.md' ||
-              name === 'overview' ||
-              name === 'overview.md' ||
-              path === 'docs/overview.md' ||
-              path.endsWith('/overview.md')
-            )
-          })
+        const orderedDocuments = [...availableDocuments].sort((a, b) =>
+          Number(b.kind === 'overview') - Number(a.kind === 'overview')
         )
-
-        if (!overviewDocument) {
-          setDocContent(
-            '_Overview documentation is not available._'
-          )
-          return
-        }
-
-        setDocuments([overviewDocument])
-        setActiveDocSlug(
-          overviewDocument.slug
-        )
+        setDocuments(orderedDocuments)
+        setActiveDocSlug(orderedDocuments[0]?.slug || null)
       })
       .catch(error => {
         if (cancelled) return
 
         console.error(
-          'Failed to load repository overview:',
+          'Failed to load repository documentation:',
           error
         )
 
         setDocContent(
-          '_Overview documentation is not available._'
+          '_Documentation is not available._'
         )
       })
       .finally(() => {
@@ -159,6 +129,7 @@ export function ApplicationPage() {
     let cancelled = false
 
     setDocContent('')
+    setHeadings([])
 
     getDocument(
       appSlug,
@@ -173,12 +144,12 @@ export function ApplicationPage() {
         if (cancelled) return
 
         console.error(
-          'Failed to load overview document:',
+          'Failed to load document:',
           error
         )
 
         setDocContent(
-          '_Overview documentation is not available._'
+          '_Documentation is not available._'
         )
       })
 
@@ -223,6 +194,7 @@ export function ApplicationPage() {
           documents={documents}
           activeSlug={activeDocSlug}
           onSelect={setActiveDocSlug}
+          headings={headings}
         />
 
         <div className="doc-content">
@@ -239,27 +211,37 @@ export function ApplicationPage() {
             )}
           </div>
 
+          <div className="repository-facts" aria-label="Repository analysis">
+            {meta?.languages?.length > 0 && <span>Analyzed languages: {meta.languages.join(', ')}</span>}
+            {[
+              ['sourceFiles', 'source files'], ['graphNodes', 'graph nodes'],
+              ['graphEdges', 'static relationships'],
+            ].map(([key, label]) => Number.isFinite(meta?.statistics?.[key]) && (
+              <span key={key}>{meta.statistics[key].toLocaleString()} {label}</span>
+            ))}
+            {documents.length > 0 && <span>{documents.length} generated documents</span>}
+          </div>
           <div className="doc-content__rule" />
 
           {loading ? (
             <div className="document-loading">
               <span className="empty-state__loader" />
-              <p>Loading overview…</p>
+              <p>Loading documentation…</p>
             </div>
           ) : docContent ? (
             <MarkdownViewer
               content={docContent}
+              onHeadings={setHeadings}
             />
           ) : (
             <div className="document-empty">
               <span>◇</span>
-              <p>Overview documentation has not been generated yet.</p>
+              <p>Documentation has not been generated yet.</p>
             </div>
           )}
         </div>
 
-        <div className="app-chat-panel">
-          <div className="app-chat-panel__title">
+        <ResizableChat key={appSlug} heading={<>
             <div className="app-chat-panel__heading">
               <span className="app-chat-panel__spark">✦</span>
               <div>
@@ -274,7 +256,7 @@ export function ApplicationPage() {
                 activated ? '' : ' app-chat-panel__dot--inactive'
               }`}
             />
-          </div>
+          </>}>
 
           <div
             style={{
@@ -303,7 +285,7 @@ export function ApplicationPage() {
               }
             />
           </div>
-        </div>
+        </ResizableChat>
       </div>
     </div>
   )
